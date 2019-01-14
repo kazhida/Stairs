@@ -1,5 +1,6 @@
 package com.abplus.stairs.core.elements
 
+
 /**
  * PLCを構成するデバイス（接点やメモリ、タイマ、カウンタ）
  */
@@ -16,13 +17,13 @@ sealed class Device(
     /**
      * PLCのメモリサイズ
      */
-    enum class MemorySize {
-        Int16,
-        Int32,
-        Int64,
-        Float16,
-        Float32,
-        Float64
+    sealed class MemorySize(val bitSize: Int) {
+        class Int16: MemorySize(16)
+        class Int32: MemorySize(43)
+        class Int64: MemorySize(64)
+        class Float16: MemorySize(16)
+        class Float32: MemorySize(32)
+        class Float6: MemorySize(64)
     }
 
     /**
@@ -43,11 +44,11 @@ sealed class Device(
          * 入力接点
          * 出力の対象にはできない
          */
-        class Input(name: String, address: Int, inverse: Boolean) : Bit(name, address, inverse) {
+        open class Input(name: String, address: Int, inverse: Boolean) : Bit(name, address, inverse) {
 
             override val not: Condition get() = Input(name, address, !inverse)
 
-            class Allocator(name: String, size: Int, origin: Int = 0) : AbstractAllocator<Input>(name, size, origin) {
+            open class Allocator(name: String, size: Int, origin: Int = 0) : DeviceAllocator<Input>(name, size, origin) {
                 override fun create(name: String, address: Int, target: Word<MemorySize>?): Input = Input(name, address, false)
             }
         }
@@ -55,11 +56,11 @@ sealed class Device(
         /**
          * 入力以外の接点
          */
-        class Contact(name: String, address: Int, inverse: Boolean) : Bit(name, address, inverse), Outable {
+        open class Contact(name: String, address: Int, inverse: Boolean) : Bit(name, address, inverse), Outable {
 
             override val not: Condition get() = Contact(name, address, !inverse)
 
-            class Allocator(name: String, size: Int, origin: Int = 0) : AbstractAllocator<Contact>(name, size, origin) {
+            open class Allocator(name: String, size: Int, origin: Int = 0) : DeviceAllocator<Contact>(name, size, origin) {
                 override fun create(name: String, address: Int, target: Word<MemorySize>?): Contact = Contact(name, address, false)
             }
         }
@@ -67,7 +68,7 @@ sealed class Device(
         /**
          * メモリの値比較（疑似接点）
          */
-        class Compare<M: MemorySize>(val left: Word<M>, val type: Type, val right: Word<M>) : Bit("", 0, false) {
+        open class Compare<M: MemorySize>(val left: Word<M>, val type: Type, val right: Word<M>) : Bit("", 0, false) {
             
             enum class Type {
                 EQ, // ==
@@ -87,13 +88,6 @@ sealed class Device(
                 Type.GE -> Compare(left, Type.LT, right)
             }
         }
-
-        /**
-         * メモリのビット位置を接点とみなす
-         */
-        class BitOf<M: MemorySize>(val memory: Word.Memory<M>, val bit: Int, inverse: Boolean = false) : Bit(memory.name, memory.address, inverse), Outable {
-            override val not: Condition get() = BitOf(memory, bit, !inverse)
-        }
     }
 
     /**
@@ -104,9 +98,9 @@ sealed class Device(
         /**
          * メモリ
          */
-        class Memory<M: MemorySize>(name: String, address: Int) : Word<M>(name, address) {
+        open class Memory<M: MemorySize>(name: String, address: Int) : Word<M>(name, address) {
 
-            class Allocator<M: MemorySize>(name: String, size: Int, origin: Int = 0) : AbstractAllocator<Memory<M>>(name, size, origin) {
+            open class Allocator<M: MemorySize>(name: String, size: Int, origin: Int = 0) : DeviceAllocator<Memory<M>>(name, size, origin) {
                 override fun create(name: String, address: Int, target: Word<MemorySize>?): Memory<M> = Memory(name, address)
             }
         }
@@ -119,11 +113,11 @@ sealed class Device(
         /**
          * タイマ
          */
-        class Timer<M: MemorySize>(name: String, address: Int, val target: Word<M>) : Device.Word<M>(name, address), Outable {
+        open class Timer<M: MemorySize>(name: String, address: Int, val target: Word<M>) : Device.Word<M>(name, address), Outable {
 
             val contact: Bit get() = Bit.Compare(this, Bit.Compare.Type.GE, target)
 
-            class Allocator<Timer>(name: String, size: Int, origin: Int = 0) : AbstractAllocator<Device>(name, size, origin) {
+            open class Allocator<Timer>(name: String, size: Int, origin: Int = 0) : DeviceAllocator<Device>(name, size, origin) {
                 override fun create(name: String, address: Int, target: Word<MemorySize>?): Device = Timer(name, address, target!!)
             }
         }
@@ -131,11 +125,11 @@ sealed class Device(
         /**
          * カウンタ
          */
-        class Counter<M: MemorySize>(name: String, address: Int, val target: Word<M>) : Device.Word<M>(name, address), Outable {
+        open class Counter<M: MemorySize>(name: String, address: Int, val target: Word<M>) : Device.Word<M>(name, address), Outable {
 
             val contact: Bit get() = Bit.Compare(this, Bit.Compare.Type.GE, target)
 
-            class Allocator<Counter>(name: String, size: Int, origin: Int = 0) : AbstractAllocator<Device>(name, size, origin) {
+            open class Allocator<Counter>(name: String, size: Int, origin: Int = 0) : DeviceAllocator<Device>(name, size, origin) {
                 override fun create(name: String, address: Int, target: Word<MemorySize>?): Device = Counter(name, address, target!!)
             }
         }
@@ -145,31 +139,52 @@ sealed class Device(
      * 文字列を保持する疑似デバイス
      * 機種依存が激しいので、かなり抽象化している
      */
-    class StringBuffer(name: String, address: Int, val wordCount: Int, initial: String = "") : Device(name, address) {
+    open class StringBuffer(name: String, address: Int, val wordCount: Int, initial: String = "") : Device(name, address) {
         var text: String = initial
     }
 
-    abstract class AbstractAllocator<D : Device>(val name: String, size: Int, origin: Int, val target: Device.Word<MemorySize>? = null) {
+    abstract class DeviceAllocator<D : Device>(val name: String, size: Int, origin: Int, val target: Device.Word<MemorySize>? = null) {
 
         class OverFlowError(name: String): Error("Too many allocate for '$name'")
+
+        data class Comment(
+            val device: Device,
+            val comment: String
+        )
+
+        val comments: List<Comment> = ArrayList()
 
         private val max = size + origin
         private var idx = origin
 
-        fun allocate(): D {
+        fun allocate(comment: String? = null): D {
             if (idx < max) {
-                return create(name, idx++, target)
+                return create(name, idx++, target).also {
+                    if (comment != null) {
+                        addComment(it, comment)
+                    }
+                }
             } else {
                 throw OverFlowError(name)
             }
         }
 
-        fun allocate(skipTo: Int): D {
+        fun allocate(skipTo: Int, comment: String? = null): D {
             if (skipTo in (idx + 1)..(max - 1)) {
                 idx = skipTo
-                return create(name, idx++, target)
+                return create(name, idx++, target).also {
+                    if (comment != null) {
+                        addComment(it, comment)
+                    }
+                }
             } else {
                 throw OverFlowError(name)
+            }
+        }
+
+        private fun addComment(device: Device, comment: String) {
+            if (comments is MutableList) {
+                comments.add(Comment(device, comment))
             }
         }
 
